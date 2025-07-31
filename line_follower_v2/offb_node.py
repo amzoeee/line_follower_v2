@@ -22,7 +22,7 @@ MAX_X_SPEED = 1.0 # meters per second, forward
 MAX_Y_SPEED = 1.0 # meters per second, right
 MAX_Z_SPEED = 1.0 # meters per second, down
 
-TAKEOFF_ALTITUDE = 1.0 # meters
+TAKEOFF_ALTITUDE = 3.0 # meters
 TAKEOFF_TIME = 10 # seconds
 
 IMAGE_WIDTH, IMAGE_HEIGHT = 1280, 960 # pixels
@@ -31,13 +31,13 @@ CENTER = np.array([IMAGE_WIDTH//2, IMAGE_HEIGHT//2]) # Center of the image frame
 EXTEND = 300 # Number of pixels forward to extrapolate the line
 
 #PID Constants
-KP_X = 0.01
-KP_Y = 0.01
+KP_X = 0.001
+KP_Y = 0.001
 KP_W_Z = 0.5
 
-KD_X = 0.005
-KD_Y = 0.005
-KD_W_Z = 0.01
+KD_X = 0.0001
+KD_Y = 0.0001
+KD_W_Z = 0.04
 
 LOW = np.array([250, 250, 250])  # Lower image thresholding bound
 HI = np.array([255, 255, 255])   # Upper image thresholding bound
@@ -126,7 +126,7 @@ class OffboardControlNode(Node):
         self.current_pose = PoseStamped()
         self.setpoint = PositionTarget()
         self.setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
-        self.setpoint.type_mask = IGNORE_PX | IGNORE_PY | IGNORE_VZ | IGNORE_AFX | IGNORE_AFY | IGNORE_AFZ | IGNORE_YAW_RATE
+        self.setpoint.type_mask = IGNORE_PX | IGNORE_PY | IGNORE_VZ | IGNORE_AFX | IGNORE_AFY | IGNORE_AFZ | IGNORE_YAW
         
         self.x = None
         self.y = None
@@ -242,8 +242,8 @@ class OffboardControlNode(Node):
             self.vx__dc = KP_X * error[0]
             self.vy__dc = KP_Y * error[1]
 
-            self.vx__dc += KD_X * (error[0]-self.prev_x_error)/0.1
-            self.vy__dc += KD_Y * (error[1]-self.prev_y_error)/0.1
+            self.vx__dc += KD_X * (error[0]-self.prev_x_error)/0.05
+            self.vy__dc += KD_Y * (error[1]-self.prev_y_error)/0.05
 
             self.prev_x_error = error[0]
             self.prev_y_error = error[1]
@@ -251,12 +251,12 @@ class OffboardControlNode(Node):
             # Get angle between y-axis and line direction
             # Positive angle is counter-clockwise
             forward = np.array([0.0, 1.0])
-            angle_error = math.atan2(-line_dir[0], line_dir[1])
+            angle_error = -math.atan2(-line_dir[0], line_dir[1])
 
             # Set angular velocity (yaw)
             self.wz__dc = KP_W_Z * angle_error
 
-            self.wz__dc += KD_W_Z * (angle_error-self.prev_angle_error)/0.1
+            self.wz__dc += KD_W_Z * (angle_error-self.prev_angle_error)/0.05
 
             self.prev_angle_error = angle_error
 
@@ -268,6 +268,11 @@ class OffboardControlNode(Node):
         self.setpoint.velocity.x = setpoint[0]
         self.setpoint.velocity.y = setpoint[1]
         self.setpoint.yaw_rate = setpoint[2]
+
+        # self.setpoint.velocity.x = 1.0
+        # self.setpoint.velocity.y = 0.0
+        # self.setpoint.yaw_rate = 5.0
+        
         self.setpoint.position.z = TAKEOFF_ALTITUDE
 
     def convert_velocity_setpoints(self):
@@ -300,8 +305,8 @@ class OffboardControlNode(Node):
                             [0.0, 0.0, 1.0, 0.0],
                             [0.0, 0.0, 0.0, 1.0]])
 
-        R_dc2lned = np.array([[-np.sin(yaw), np.cos(yaw), 0.0, 0.0], 
-                                 [np.cos(yaw), np.sin(yaw), 0.0, 0.0], 
+        R_dc2lned = np.array([[np.cos(yaw), -np.sin(yaw), 0.0, 0.0], 
+                                 [np.sin(yaw), np.cos(yaw), 0.0, 0.0], 
                                  [0.0, 0.0, 1.0, 0.0], 
                                  [0.0, 0.0, 0.0, 1.0]]) 
 
