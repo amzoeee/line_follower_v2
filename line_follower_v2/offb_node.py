@@ -344,6 +344,7 @@ class OffboardControlNode(Node):
         # Keep publishing the setpoint
         self.setpoint.header.stamp = self.get_clock().now().to_msg()
         self.local_setpoint_pub.publish(self.setpoint)
+        self.get_logger().info(f"Publishing velocites; x = {self.setpoint.velocity.x}, y = {self.setpoint.velocity.y}, w = {self.setpoint.yaw_rate}")
 
 def main(args=None):
     rclpy.init(args=args)
