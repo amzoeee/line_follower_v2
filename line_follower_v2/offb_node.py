@@ -276,7 +276,7 @@ class OffboardControlNode(Node):
 
         self.get_logger().info("yaw: " + str(yaw))
 
-        R_dc2bd = np.array([[0.0, -1.0, 0.0, 0.0]
+        R_dc2bd = np.array([[0.0, -1.0, 0.0, 0.0],
                             [1.0, 0.0, 0.0, 0.0],
                             [0.0, 0.0, 1.0, 0.0],
                             [0.0, 0.0, 0.0, 1.0]])
