@@ -1,6 +1,6 @@
 from setuptools import find_packages, setup
 
-package_name = 'mavros_question_mark'
+package_name = 'line_follower_v2'
 
 setup(
     name=package_name,
@@ -20,7 +20,7 @@ setup(
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
-            "offb_node = mavros_question_mark.offb_node:main"
+            "offb_node = line_follower_v2.offb_node:main"
         ],
     },
 )
