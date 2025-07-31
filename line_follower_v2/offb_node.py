@@ -7,6 +7,7 @@ from mavros_msgs.msg import State, PositionTarget
 from mavros_msgs.srv import CommandBool, SetMode
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 import numpy as np
 import cv2
 from tf_transformations import euler_from_quaternion
@@ -30,17 +31,13 @@ CENTER = np.array([IMAGE_WIDTH//2, IMAGE_HEIGHT//2]) # Center of the image frame
 EXTEND = 300 # Number of pixels forward to extrapolate the line
 
 #PID Constants
-KP_X = 0.0
-KP_Y = 0.0
-KP_W_Z = 0.0
+KP_X = 0.01
+KP_Y = 0.01
+KP_W_Z = 0.5
 
-KD_X = 0.0
-KD_Y = 0.0
-KD_W_Z = 0.0
-
-prev_x_error = 0
-prev_y_error = 0
-prev_angle_error = 0
+KD_X = 0.005
+KD_Y = 0.005
+KD_W_Z = 0.01
 
 LOW = np.array([250, 250, 250])  # Lower image thresholding bound
 HI = np.array([255, 255, 255])   # Upper image thresholding bound
@@ -79,6 +76,14 @@ class OffboardControlNode(Node):
             history=HistoryPolicy.KEEP_LAST,
             depth=1
         )
+
+        # Configure QoS Profile specifically for pose and camera>??
+        qos_profile_2 = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            durability=DurabilityPolicy.VOLATILE,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
         
         # Create state subscriber
         self.state_sub = self.create_subscription(
@@ -92,7 +97,7 @@ class OffboardControlNode(Node):
             PoseStamped,
             '/mavros/local_position/pose',
             self.pose_cb,
-            10
+            qos_profile_2
         )
 
         self.camera_sub = self.create_subscription(
@@ -100,7 +105,7 @@ class OffboardControlNode(Node):
             '/world/line_following_track/model/x500_mono_cam_down_0/link/camera_link/sensor/imager/image', # for sim 
             # '/camera_1/image_raw', # for real
             self.camera_cb,
-            qos_profile
+            qos_profile_2
         )
 
         # Create pos/vel publisher
@@ -123,6 +128,18 @@ class OffboardControlNode(Node):
         self.setpoint.coordinate_frame = PositionTarget.FRAME_LOCAL_NED
         self.setpoint.type_mask = IGNORE_PX | IGNORE_PY | IGNORE_VZ | IGNORE_AFX | IGNORE_AFY | IGNORE_AFZ | IGNORE_YAW_RATE
         
+        self.x = None
+        self.y = None
+        self.vx = None
+        self.vy = None
+
+        self.prev_x_error = 0
+        self.prev_y_error = 0
+        self.prev_angle_error = 0
+
+        # Initialize instance of CvBridge to convert images between OpenCV images and ROS images
+        self.bridge = CvBridge()
+
         # Wait for MAVROS services to be available
         while not self.arming_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /mavros/cmd/arming service...')
@@ -205,46 +222,47 @@ class OffboardControlNode(Node):
             return float(x), float(y), float(vx), float(vy)
 
     def run_drone(self):
-        x, y, vx, vy = self.x, self.y, self.vx, self.vy
+        if not self.x == None:
+            x, y, vx, vy = self.x, self.y, self.vx, self.vy
 
-        line_point = np.array([x, y])
-        line_dir = np.array([vx, vy])
-        line_dir = line_dir / np.linalg.norm(line_dir)  # Ensure unit vector
+            line_point = np.array([x, y])
+            line_dir = np.array([vx, vy])
+            line_dir = line_dir / np.linalg.norm(line_dir)  # Ensure unit vector
 
-        if line_dir[1] < 0:
-            line_dir = -line_dir
+            if line_dir[1] < 0:
+                line_dir = -line_dir
 
-        # Target point EXTEND pixels ahead along the line direction
-        target = line_point + EXTEND * line_dir
+            # Target point EXTEND pixels ahead along the line direction
+            target = line_point + EXTEND * line_dir
 
-        # Error between center and target
-        error = target - CENTER
+            # Error between center and target
+            error = target - CENTER
 
-        # Set linear velocities (downward camera frame)
-        self.vx__dc = KP_X * error[0]
-        self.vy__dc = KP_Y * error[1]
+            # Set linear velocities (downward camera frame)
+            self.vx__dc = KP_X * error[0]
+            self.vy__dc = KP_Y * error[1]
 
-        self.vx__dc += KD_X * (error[0]-self.prev_x_error)/0.1
-        self.vy__dc += KD_Y * (error[1]-self.prev_y_error)/0.1
+            self.vx__dc += KD_X * (error[0]-self.prev_x_error)/0.1
+            self.vy__dc += KD_Y * (error[1]-self.prev_y_error)/0.1
 
-        self.prev_x_error = error[0]
-        self.prev_y_error = error[1]
+            self.prev_x_error = error[0]
+            self.prev_y_error = error[1]
 
-        # Get angle between y-axis and line direction
-        # Positive angle is counter-clockwise
-        forward = np.array([0.0, 1.0])
-        angle_error = math.atan2(-line_dir[0], line_dir[1])
+            # Get angle between y-axis and line direction
+            # Positive angle is counter-clockwise
+            forward = np.array([0.0, 1.0])
+            angle_error = math.atan2(-line_dir[0], line_dir[1])
 
-        # Set angular velocity (yaw)
-        self.wz__dc = KP_W_Z * angle_error
+            # Set angular velocity (yaw)
+            self.wz__dc = KP_W_Z * angle_error
 
-        self.wz__dc += KD_W_Z * (angle_error-self.prev_w_error)/0.1
+            self.wz__dc += KD_W_Z * (angle_error-self.prev_angle_error)/0.1
 
-        self.prev_w_error = angle_error
+            self.prev_angle_error = angle_error
 
-        self.update_setpoint(self.convert_velocity_setpoints())
+            self.update_setpoint(self.convert_velocity_setpoints())
 
-        self.get_logger().info(f"x error: {error[0]}, y error: {error[1]}, angle error: {angle_error}")
+            self.get_logger().info(f"x error: {error[0]}, y error: {error[1]}, angle error: {angle_error}")
 
     def update_setpoint(self, setpoint):
         self.setpoint.velocity.x = setpoint[0]
@@ -254,7 +272,7 @@ class OffboardControlNode(Node):
 
     def convert_velocity_setpoints(self):
         '''Convert velocity setpoints from downward camera frame to lenu frame'''
-        vx, vy, vz = self.dc2lned((self.vx__dc, self.vy__dc, self.vz__dc))
+        vx, vy, _ = self.dc2lned((self.vx__dc, self.vy__dc, 0.0))
         _, _, wz = self.dc2lned((0.0, 0.0, self.wz__dc))
 
         vx = min(max(vx,-MAX_X_SPEED), MAX_X_SPEED)
@@ -271,7 +289,8 @@ class OffboardControlNode(Node):
                         [     0.0]])
         
         
-        quaternion = self.current_pose.orientation
+        quaternion = self.current_pose.pose.orientation
+        quaternion = [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
         roll, pitch, yaw = euler_from_quaternion(quaternion)
 
         self.get_logger().info("yaw: " + str(yaw))
